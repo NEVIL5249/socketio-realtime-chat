@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Modern Chat</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="container">
+    <!-- LOGIN -->
+    <div id="loginScreen">
+      <div class="login-box">
+        <h3>Welcome to Chat</h3>
+        <p class="login-subtitle">Enter your name to join the conversation</p>
+        <div class="input-group">
+          <input id="usernameInput" placeholder="Your name" maxlength="20" />
+        </div>
+        <button id="joinBtn" onclick="joinChat()">
+          Join Chat
+        </button>
+      </div>
+    </div>
+
+    <!-- CHAT -->
+    <div id="chatScreen">
+      <div class="header">
+        <div class="title">💬 Live Chat</div>
+        <div class="users-count" id="usersListDisplay">
+          <div class="online-dot"></div>
+          <span>0 online</span>
+        </div>
+      </div>
+      <div class="main">
+        <div class="chat-area">
+          <div class="chat-messages" id="chatMessages"></div>
+          <div id="typingIndicator"></div>
+          <div class="chat-input-container">
+            <div class="input-wrapper">
+              <textarea id="messageInput" placeholder="Type your message..." rows="1" aria-label="Message input"></textarea>
+            </div>
+            <button class="send-button" id="sendBtn" title="Send message">
+              ➤
+            </button>
+          </div>
+        </div>
+        <div class="sidebar">
+          <h4>👥 Online Users</h4>
+          <div id="usersList"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Socket.IO client script -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    let socket = null;
+    let currentUsername;
+    let typingTimeout;
+
+    // Avatar colors for users
+    const avatarColors = [
+      '#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', 
+      '#10b981', '#3b82f6', '#ef4444', '#84cc16'
+    ];
+
+    function getAvatarColor(username) {
+      let hash = 0;
+      for (let i = 0; i < username.length; i++) {
+        hash = username.charCodeAt(i) + ((hash << 5) - hash);
+      }
+      return avatarColors[Math.abs(hash) % avatarColors.length];
+    }
+
+    function getInitials(username) {
+      return username.split(' ').map(word => word[0]).join('').toUpperCase().slice(0, 2);
+    }
+
+    function joinChat() {
+      console.log('joinChat function called');
+      
+      const usernameInput = document.getElementById('usernameInput');
+      if (!usernameInput) {
+        console.error('Username input not found!');
+        return;
+      }
+      
+      const username = usernameInput.value.trim();
+      console.log('Username entered:', username);
+      
+      if (username === '') {
+        usernameInput.focus();
+        usernameInput.style.borderColor = '#ef4444';
+        setTimeout(() => {
+          usernameInput.style.borderColor = '';
+        }, 2000);
+        return;
+      }
+
+      currentUsername = username;
+      console.log('Creating socket connection...');
+      
+      if (!socket) {
+        socket = io();
+        setupSocketListeners();
+      }
+
+      console.log('Emitting user-join event');
+      socket.emit('user-join', username);
+
+      const loginScreen = document.getElementById('loginScreen');
+      const chatScreen = document.getElementById('chatScreen');
+      
+      if (loginScreen && chatScreen) {
+        loginScreen.style.display = 'none';
+        chatScreen.style.display = 'flex';
+        console.log('Switched to chat screen');
+      }
+
+      const messageInput = document.getElementById('messageInput');
+      if (messageInput) {
+        setTimeout(() => messageInput.focus(), 300);
+      }
+    }
+
+    function setupSocketListeners() {
+      socket.on('receive-message', (data) => {
+        const isOwn = data.username === currentUsername;
+        addMessage(data.message, data.username, data.time, isOwn);
+      });
+
+      socket.on('user-joined', (username) => {
+        addSystemMessage(`${username} joined the chat`);
+      });
+
+      socket.on('user-left', (username) => {
+        addSystemMessage(`${username} left the chat`);
+      });
+
+      socket.on('user-list', (users) => {
+        updateUsersList(users);
+      });
+
+      socket.on('user-typing', (data) => {
+        const typingIndicator = document.getElementById('typingIndicator');
+        if (data.isTyping && data.username !== currentUsername) {
+          typingIndicator.innerHTML = `
+            ${data.username} is typing
+            <span class="typing-dots">
+              <span class="typing-dot"></span>
+              <span class="typing-dot"></span>
+              <span class="typing-dot"></span>
+            </span>
+          `;
+          typingIndicator.style.display = 'flex';
+        } else {
+          typingIndicator.style.display = 'none';
+        }
+      });
+    }
+
+    function sendMessage() {
+      const messageInput = document.getElementById('messageInput');
+      const message = messageInput.value.trim();
+
+      if (message === '') return;
+
+      socket.emit('send-message', message);
+      messageInput.value = '';
+      messageInput.style.height = 'auto';
+      
+      // Clear typing indicator
+      if (socket) {
+        socket.emit('typing', false);
+      }
+    }
+
+ function addMessage(message, username, time, isOwn = false) {
+    const messagesContainer = document.getElementById('chatMessages');
+
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `message ${isOwn ? 'own' : 'other'}`;
+
+    // Safe parse time, fallback to now if invalid
+    let date = new Date(time);
+    if (isNaN(date.getTime())) {
+      date = new Date(); // fallback
+    }
+    const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    messageDiv.innerHTML = `
+      <div>${escapeHtml(message)}</div>
+      <div class="meta">${escapeHtml(username)} • ${timeStr}</div>
+    `;
+
+    messagesContainer.appendChild(messageDiv);
+
+    setTimeout(() => {
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }, 100);
+  }
+
+    function addSystemMessage(message) {
+      const messagesContainer = document.getElementById('chatMessages');
+
+      const messageDiv = document.createElement('div');
+      messageDiv.className = 'system-msg';
+      messageDiv.textContent = message;
+
+      messagesContainer.appendChild(messageDiv);
+
+      setTimeout(() => {
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      }, 100);
+    }
+
+    function updateUsersList(users) {
+      const usersList = document.getElementById('usersList');
+      const usersListDisplay = document.getElementById('usersListDisplay');
+      
+      if (usersList) {
+        usersList.innerHTML = '';
+
+        if (users.length === 0) {
+          usersList.innerHTML = '<div style="color: #9ca3af; font-style: italic; text-align: center; padding: 20px;">No users online</div>';
+        } else {
+          users.forEach(user => {
+            const userDiv = document.createElement('div');
+            userDiv.className = 'user-item';
+            
+            const avatarDiv = document.createElement('div');
+            avatarDiv.className = 'user-avatar';
+            avatarDiv.style.backgroundColor = getAvatarColor(user);
+            avatarDiv.textContent = getInitials(user);
+            
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = user;
+            
+            userDiv.appendChild(avatarDiv);
+            userDiv.appendChild(nameSpan);
+            usersList.appendChild(userDiv);
+          });
+        }
+      }
+      
+      if (usersListDisplay) {
+        const countText = users.length === 1 ? '1 online' : `${users.length} online`;
+        usersListDisplay.querySelector('span').textContent = countText;
+      }
+    }
+
+    function autoResizeTextarea() {
+      const textarea = document.getElementById('messageInput');
+      textarea.style.height = 'auto';
+      textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // Event listeners
+    document.addEventListener('DOMContentLoaded', function() {
+      console.log('DOM loaded, setting up event listeners...');
+      
+      const messageInput = document.getElementById('messageInput');
+      const usernameInput = document.getElementById('usernameInput');
+      const joinBtn = document.getElementById('joinBtn');
+      const sendBtn = document.getElementById('sendBtn');
+      
+      if (messageInput) {
+        messageInput.addEventListener('keypress', function(e) {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+          }
+        });
+
+        messageInput.addEventListener('input', function() {
+          autoResizeTextarea();
+
+          if (socket && typingTimeout) clearTimeout(typingTimeout);
+
+          if (socket) {
+            socket.emit('typing', true);
+
+            typingTimeout = setTimeout(() => {
+              socket.emit('typing', false);
+            }, 1000);
+          }
+        });
+      }
+      
+      if (usernameInput) {
+        usernameInput.addEventListener('keypress', function(e) {
+          if (e.key === 'Enter') {
+            joinChat();
+          }
+        });
+        
+        // Reset border color on input
+        usernameInput.addEventListener('input', function() {
+          this.style.borderColor = '';
+        });
+      }
+      
+      if (joinBtn) {
+        joinBtn.addEventListener('click', joinChat);
+      }
+      
+      if (sendBtn) {
+        sendBtn.addEventListener('click', sendMessage);
+      }
+    });
+  </script>
+</body>
+</html>
